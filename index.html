@@ -1,9 +1,22 @@
 <!DOCTYPE html>
+<!--
+  Solar Terminator — Cesium-based realtime 3D globe
+  Version: 0.5.1 (2026-05-09)
+  Changelog (most recent on top):
+    0.5.1  Fix "globe drifts on its own" — switch to requestRenderMode,
+           ellipsoid terrain, throttled 1Hz updates, cancelFlight on init.
+           Add visible version label.
+    0.5.0  Camera fixes — disable inertia, force pitch=-90 on setView/flyTo.
+    0.4.0  Cesium rewrite for tile-based zoom (Google Maps-style).
+    0.3.0  Geolocation + user marker (Three.js version).
+    0.2.0  Time slider + date picker (Three.js version).
+    0.1.0  Initial Three.js globe with day/night shader.
+-->
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Solar Terminator — 실시간 지구본 (Cesium)</title>
+  <title>Solar Terminator v0.5.1 — 실시간 지구본 (Cesium)</title>
   <meta name="description" content="현재 시각 기준으로 태양빛이 닿는 지구 영역을 보여주는 Cesium 기반 실시간 3D 지구본">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -244,8 +257,8 @@
     <header>
       <h1>Solar <span class="accent">·</span> Terminator</h1>
       <div class="meta">
-        CESIUM-POWERED<br>
-        TILED 3D GLOBE / v2
+        v0.5.1 · 2026-05-09<br>
+        CESIUM-POWERED · TILED 3D
       </div>
     </header>
 
@@ -334,13 +347,30 @@
     // Lighting: enable sun-based day/night terminator
     //   Cesium uses Simon1994 planetary positions internally, so the
     //   terminator location is astronomically accurate (no manual EoT).
+    //
+    //   We deliberately leave dynamicAtmosphereLighting OFF — the
+    //   atmosphere effect causes subtle frame-to-frame variation that
+    //   reads as "the globe is drifting" when viewed from far away.
+    //   The day/night terminator on the surface is unaffected.
     // ──────────────────────────────────────────────────────────────
     viewer.scene.globe.enableLighting = true;
-    viewer.scene.globe.dynamicAtmosphereLighting = true;
-    viewer.scene.globe.dynamicAtmosphereLightingFromSun = true;
+    viewer.scene.globe.dynamicAtmosphereLighting = false;
+    viewer.scene.globe.dynamicAtmosphereLightingFromSun = false;
+
+    // Smooth ellipsoid (no terrain). Avoids tiny camera adjustments as
+    // terrain heights stream in.
+    viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
 
     // We control the clock from our slider/live mode logic
     viewer.clock.shouldAnimate = false;
+
+    // Render only when something changes (user input, requestRender call).
+    // This is the primary fix for "globe moves on its own": the default
+    // continuous 60Hz render loop, combined with per-frame lighting
+    // updates, can produce subtle visual drift. With on-demand rendering
+    // the scene is bit-exact stable until we explicitly request a redraw.
+    viewer.scene.requestRenderMode = true;
+    viewer.scene.maximumRenderTimeChange = Infinity;
 
     // ──────────────────────────────────────────────────────────────
     // Camera control tuning
@@ -371,6 +401,11 @@
         roll: 0
       }
     });
+    // Cancel any residual flight animation that Cesium might have queued
+    viewer.camera.cancelFlight();
+
+    console.log('%cSolar Terminator', 'color:#f4a261;font-size:14px;font-weight:600');
+    console.log('Version 0.5.1 (2026-05-09) — Cesium build');
 
     // Hide loading message after the first frame finishes rendering
     viewer.scene.postRender.addEventListener(function once() {
@@ -483,13 +518,16 @@
     }
 
     // ──────────────────────────────────────────────────────────────
-    // Per-frame update: drive Cesium clock + HUD
+    // Throttled HUD + clock update
+    //   Previously this ran every frame via scene.preRender. With
+    //   requestRenderMode now ON, we run the update on a 1-second
+    //   interval instead. The day/night terminator drifts at only
+    //   15° per hour, so 1 Hz lighting updates are visually smooth.
+    //   On user input (slider, date pick) we trigger an immediate
+    //   update so it feels instantaneous.
     // ──────────────────────────────────────────────────────────────
     function update() {
       const date = (manualDate !== null) ? manualDate : new Date();
-      // Cesium uses clock.currentTime to compute the sun position used
-      // by enableLighting. Setting it every frame keeps lighting in sync
-      // with our time mode (LIVE or MANUAL).
       viewer.clock.currentTime = Cesium.JulianDate.fromDate(date);
 
       elUTC.textContent   = fmtUTC(date);
@@ -504,8 +542,11 @@
         elSlider.value = sliderMinutes(date);
         updateSliderDisplay();
       }
+      // Tell Cesium to redraw with the new sun position
+      viewer.scene.requestRender();
     }
-    viewer.scene.preRender.addEventListener(update);
+    update();
+    setInterval(update, 1000);
 
     // ──────────────────────────────────────────────────────────────
     // Time control event handlers
@@ -514,12 +555,14 @@
       setManualMode();
       manualDate = buildManualDate();
       updateSliderDisplay();
+      update();
     });
     elDate.addEventListener('change', () => {
       setManualMode();
       manualDate = buildManualDate();
+      update();
     });
-    elNowBtn.addEventListener('click', () => setLiveMode());
+    elNowBtn.addEventListener('click', () => { setLiveMode(); update(); });
 
     // Initialize controls to current real time
     {
