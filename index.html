@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Solar Terminator — 실시간 지구본</title>
+  <meta name="description" content="현재 시각 기준으로 태양빛이 닿는 지구 영역을 보여주는 실시간 3D 지구본">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Sora:wght@300;500&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: #0a0d14;
+      color: #e8e8ec;
+      font-family: 'Sora', system-ui, sans-serif;
+      font-weight: 300;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    main {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 24px 32px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      pointer-events: none;
+      z-index: 3;
+    }
+    header h1 {
+      font-family: 'Sora', sans-serif;
+      font-weight: 500;
+      font-size: 14px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #e8e8ec;
+    }
+    header h1 .accent { color: #f4a261; }
+    header .meta {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: #787a85;
+      text-align: right;
+      line-height: 1.6;
+    }
+
+    #stage {
+      flex: 1;
+      position: relative;
+      cursor: grab;
+      touch-action: none;
+    }
+    #stage:active { cursor: grabbing; }
+    canvas { display: block; }
+
+    .panel {
+      position: absolute;
+      bottom: 24px;
+      left: 32px;
+      padding: 16px 20px;
+      background: rgba(15, 18, 26, 0.82);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 0.5px solid rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      line-height: 1.7;
+      z-index: 3;
+      min-width: 360px;
+    }
+    .panel .row { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+    .panel .row + .row { margin-top: 4px; }
+    .panel .lbl { color: #787a85; font-weight: 300; flex-shrink: 0; }
+    .panel .val { color: #e8e8ec; font-weight: 400; }
+    .panel .val.warm { color: #f4a261; }
+    .panel hr {
+      border: 0;
+      border-top: 0.5px solid rgba(255, 255, 255, 0.08);
+      margin: 10px 0;
+    }
+
+    .ctrl-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+    .ctrl-row .lbl { width: 64px; }
+
+    .date-in {
+      flex: 1;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      background: rgba(255, 255, 255, 0.04);
+      color: #e8e8ec;
+      border: 0.5px solid rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+      padding: 4px 8px;
+      color-scheme: dark;
+      outline: none;
+    }
+    .date-in:focus { border-color: rgba(244, 162, 97, 0.5); }
+
+    .slider {
+      -webkit-appearance: none;
+      appearance: none;
+      flex: 1;
+      height: 18px;
+      background: transparent;
+      cursor: pointer;
+      outline: none;
+    }
+    .slider::-webkit-slider-runnable-track {
+      height: 2px;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 1px;
+    }
+    .slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #f4a261;
+      margin-top: -5px;
+      border: none;
+    }
+    .slider::-moz-range-track {
+      height: 2px;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 1px;
+      border: none;
+    }
+    .slider::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #f4a261;
+      border: none;
+      cursor: pointer;
+    }
+
+    .time-display {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: #e8e8ec;
+      min-width: 56px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .now-btn {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      background: transparent;
+      color: #f4a261;
+      border: 0.5px solid rgba(244, 162, 97, 0.4);
+      border-radius: 3px;
+      padding: 4px 10px;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+      flex-shrink: 0;
+    }
+    .now-btn:hover {
+      background: rgba(244, 162, 97, 0.1);
+      border-color: rgba(244, 162, 97, 0.7);
+    }
+    .now-btn.live {
+      color: #545560;
+      border-color: rgba(255, 255, 255, 0.08);
+      cursor: default;
+      background: transparent;
+    }
+
+    .mode-tag {
+      display: inline-block;
+      font-size: 9px;
+      letter-spacing: 0.15em;
+      padding: 2px 6px;
+      border-radius: 2px;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+    .mode-tag.live   { color: #5dcaa5; background: rgba(93, 202, 165, 0.1); border: 0.5px solid rgba(93, 202, 165, 0.3); }
+    .mode-tag.manual { color: #f4a261; background: rgba(244, 162, 97, 0.1); border: 0.5px solid rgba(244, 162, 97, 0.3); }
+
+    .hint {
+      position: absolute;
+      bottom: 24px;
+      right: 32px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: #545560;
+      letter-spacing: 0.05em;
+      pointer-events: none;
+      z-index: 3;
+    }
+
+    .status {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: #787a85;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    @media (max-width: 640px) {
+      header { padding: 16px 18px 0; }
+      header h1 { font-size: 12px; }
+      header .meta { font-size: 10px; }
+      .panel { left: 18px; right: 18px; bottom: 18px; min-width: 0; padding: 12px 14px; font-size: 11px; }
+      .panel .lbl { font-size: 10px; }
+      .ctrl-row .lbl { width: 48px; }
+      .hint { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Solar <span class="accent">·</span> Terminator</h1>
+      <div class="meta">
+        REAL-TIME SUBSOLAR<br>
+        TRACKING / v1
+      </div>
+    </header>
+
+    <div id="stage">
+      <div class="status" id="status">텍스처 불러오는 중…</div>
+    </div>
+
+    <div class="panel">
+      <div class="row">
+        <span class="lbl">UTC<span class="mode-tag live" id="mode-tag">LIVE</span></span>
+        <span class="val" id="utc">—</span>
+      </div>
+      <div class="row">
+        <span class="lbl">LOCAL</span>
+        <span class="val" id="local">—</span>
+      </div>
+      <hr>
+      <div class="row">
+        <span class="lbl">SUBSOLAR LAT</span>
+        <span class="val warm" id="sun-lat">—</span>
+      </div>
+      <div class="row">
+        <span class="lbl">SUBSOLAR LON</span>
+        <span class="val warm" id="sun-lon">—</span>
+      </div>
+      <hr>
+      <div class="ctrl-row">
+        <span class="lbl">DATE</span>
+        <input type="date" id="date-input" class="date-in">
+        <button id="now-btn" class="now-btn live">NOW</button>
+      </div>
+      <div class="ctrl-row">
+        <span class="lbl">UTC TIME</span>
+        <input type="range" id="time-slider" class="slider" min="0" max="1439" step="1" value="0">
+        <span id="time-display" class="time-display">00:00</span>
+      </div>
+    </div>
+
+    <div class="hint">DRAG TO ROTATE · SCROLL TO ZOOM</div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+  <script>
+  (function () {
+    'use strict';
+
+    // ──────────────────────────────────────────────────────────────
+    // Scene setup
+    // ──────────────────────────────────────────────────────────────
+    const stage = document.getElementById('stage');
+    const status = document.getElementById('status');
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, stage.clientWidth / stage.clientHeight, 0.1, 100);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(stage.clientWidth, stage.clientHeight);
+    stage.appendChild(renderer.domElement);
+
+    // ──────────────────────────────────────────────────────────────
+    // Texture loading
+    //   Try several CDN-hosted Earth texture pairs in order. If all fail
+    //   (CORS, 404, network), fall back to a procedural shader that draws
+    //   a generic noise-based pseudo-Earth so the day/night terminator
+    //   logic stays inspectable even without a real surface map.
+    // ──────────────────────────────────────────────────────────────
+    const TEXTURE_SOURCES = [
+      {
+        name: 'three.js@r128 (jsdelivr)',
+        day:   'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/planets/earth_atmos_2048.jpg',
+        night: 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/planets/earth_lights_2048.png'
+      },
+      {
+        name: 'three-globe (unpkg)',
+        day:   'https://unpkg.com/three-globe@2.27.2/example/img/earth-blue-marble.jpg',
+        night: 'https://unpkg.com/three-globe@2.27.2/example/img/earth-night.jpg'
+      }
+    ];
+
+    function loadTexture(url) {
+      return new Promise((resolve, reject) => {
+        const loader = new THREE.TextureLoader();
+        loader.crossOrigin = 'anonymous';
+        loader.load(url, (tex) => resolve(tex), undefined, () => reject(new Error('load failed: ' + url)));
+      });
+    }
+
+    async function tryLoadAll() {
+      for (const src of TEXTURE_SOURCES) {
+        try {
+          const [day, night] = await Promise.all([loadTexture(src.day), loadTexture(src.night)]);
+          status.style.display = 'none';
+          buildGlobe(false, day, night);
+          return;
+        } catch (err) {
+          console.warn('[texture] source failed:', src.name, err);
+        }
+      }
+      status.textContent = '모든 텍스처 소스 로드 실패 — 단순화된 지구 표시 (대륙 모양 없음)';
+      status.style.color = '#f4a261';
+      setTimeout(() => { status.style.opacity = '0'; status.style.transition = 'opacity 0.6s'; }, 4000);
+      buildGlobe(true, null, null);
+    }
+    tryLoadAll();
+
+    // ──────────────────────────────────────────────────────────────
+    // Globe + shader
+    // ──────────────────────────────────────────────────────────────
+    let sunUniform = null;
+
+    const vertSh = `
+      varying vec3 vWorldNormal;
+      varying vec2 vUv;
+      void main() {
+        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+
+    const fragTextured = `
+      uniform sampler2D dayMap;
+      uniform sampler2D nightMap;
+      uniform vec3 sunDir;
+      varying vec3 vWorldNormal;
+      varying vec2 vUv;
+      void main() {
+        vec3 day   = texture2D(dayMap,   vUv).rgb;
+        vec3 night = texture2D(nightMap, vUv).rgb * 1.6;
+        float c = dot(normalize(vWorldNormal), normalize(sunDir));
+        float t = smoothstep(-0.18, 0.18, c);
+        vec3 col = mix(night, day, t);
+        float tw = clamp(1.0 - abs(c) * 5.0, 0.0, 1.0);
+        col = mix(col, col * vec3(1.15, 0.78, 0.62), tw * 0.35);
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    const fragProcedural = `
+      uniform vec3 sunDir;
+      varying vec3 vWorldNormal;
+      varying vec2 vUv;
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float noise(vec2 p) {
+        vec2 i = floor(p), f = fract(p);
+        float a = hash(i),                b = hash(i + vec2(1.0, 0.0));
+        float c2 = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(a, b, u.x), mix(c2, d, u.x), u.y);
+      }
+      void main() {
+        float lat = (vUv.y - 0.5) * 3.14159;
+        vec2 p = vec2(vUv.x * 6.28318, lat * 2.0);
+        float n = 0.0; float amp = 0.5;
+        for (int i = 0; i < 5; i++) { n += noise(p) * amp; p *= 2.0; amp *= 0.5; }
+        vec3 ocean = vec3(0.10, 0.22, 0.38);
+        vec3 land  = vec3(0.20, 0.42, 0.18);
+        vec3 ice   = vec3(0.85, 0.88, 0.92);
+        vec3 base  = mix(ocean, land, smoothstep(0.45, 0.55, n));
+        base = mix(base, ice, smoothstep(0.85, 1.0, abs(sin(lat))));
+        vec3 night = base * 0.08 + vec3(0.02, 0.03, 0.06);
+        float c = dot(normalize(vWorldNormal), normalize(sunDir));
+        float t = smoothstep(-0.18, 0.18, c);
+        vec3 col = mix(night, base, t);
+        float tw = clamp(1.0 - abs(c) * 5.0, 0.0, 1.0);
+        col = mix(col, col * vec3(1.15, 0.78, 0.62), tw * 0.35);
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    function buildGlobe(fallback, dayTex, nightTex) {
+      const geom = new THREE.SphereGeometry(1, 96, 96);
+      const uniforms = { sunDir: { value: new THREE.Vector3(1, 0, 0) } };
+      if (!fallback) {
+        uniforms.dayMap   = { value: dayTex };
+        uniforms.nightMap = { value: nightTex };
+      }
+      sunUniform = uniforms.sunDir;
+
+      const mat = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader: vertSh,
+        fragmentShader: fallback ? fragProcedural : fragTextured
+      });
+      scene.add(new THREE.Mesh(geom, mat));
+
+      // axial line
+      const axisGeom = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, -1.25, 0), new THREE.Vector3(0, 1.25, 0)
+      ]);
+      const axisMat = new THREE.LineBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.12
+      });
+      scene.add(new THREE.Line(axisGeom, axisMat));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Coordinate conventions
+    //   Three.js SphereGeometry default UV maps:
+    //     Greenwich (lon 0°)  → +X
+    //     Long.   90°E        → −Z
+    //     Long.  180°         → −X
+    //     Long.   90°W        → +Z
+    //   Therefore:
+    //     vec.x =  cos(lat) · cos(lon)
+    //     vec.y =  sin(lat)
+    //     vec.z = −cos(lat) · sin(lon)
+    // ──────────────────────────────────────────────────────────────
+    function geoToVec(latDeg, lonDeg, r) {
+      const lat = latDeg * Math.PI / 180;
+      const lon = lonDeg * Math.PI / 180;
+      const k = (r === undefined ? 1 : r);
+      return new THREE.Vector3(
+         k * Math.cos(lat) * Math.cos(lon),
+         k * Math.sin(lat),
+        -k * Math.cos(lat) * Math.sin(lon)
+      );
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Solar position (low-precision, no equation-of-time correction)
+    //   Declination ≈ 23.44° · sin(2π · (N − 81) / 365),  N = day of year
+    //   Sub-solar longitude = (12 − UTC_hours) · 15°
+    //   Expected error: ±0.5° in declination, ±15 min (~3.75°) from EoT
+    // ──────────────────────────────────────────────────────────────
+    function getSunDir(date) {
+      const startUTC = Date.UTC(date.getUTCFullYear(), 0, 0);
+      const dayOfYear = Math.floor((date.getTime() - startUTC) / 86400000);
+      const decl = 23.44 * Math.sin(2 * Math.PI * (dayOfYear - 81) / 365);
+      const utcH = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+      const lonDeg = (12 - utcH) * 15;
+      return { vec: geoToVec(decl, lonDeg, 1), lat: decl, lon: lonDeg };
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // HUD + manual time control
+    // ──────────────────────────────────────────────────────────────
+    const elUTC      = document.getElementById('utc');
+    const elLocal    = document.getElementById('local');
+    const elLat      = document.getElementById('sun-lat');
+    const elLon      = document.getElementById('sun-lon');
+    const elDate     = document.getElementById('date-input');
+    const elSlider   = document.getElementById('time-slider');
+    const elTimeDisp = document.getElementById('time-display');
+    const elNowBtn   = document.getElementById('now-btn');
+    const elModeTag  = document.getElementById('mode-tag');
+
+    // When manualDate is null, the globe follows real time.
+    // When set, the slider/date input drive the displayed time.
+    let manualDate = null;
+
+    function pad(n) { return String(n).padStart(2, '0'); }
+    function fmtTime(d) {
+      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+        + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    }
+    function fmtUTC(d) {
+      return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate())
+        + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
+    }
+    function fmtLatLon(lat, lon) {
+      let lonN = lon;
+      while (lonN > 180)  lonN -= 360;
+      while (lonN < -180) lonN += 360;
+      return {
+        lat: Math.abs(lat).toFixed(2) + '° ' + (lat >= 0 ? 'N' : 'S'),
+        lon: Math.abs(lonN).toFixed(2) + '° ' + (lonN >= 0 ? 'E' : 'W')
+      };
+    }
+    function dateInputValue(d) {
+      return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
+    }
+    function sliderMinutes(d) {
+      return d.getUTCHours() * 60 + d.getUTCMinutes();
+    }
+
+    function setLiveMode() {
+      manualDate = null;
+      elNowBtn.classList.add('live');
+      elModeTag.classList.remove('manual');
+      elModeTag.classList.add('live');
+      elModeTag.textContent = 'LIVE';
+    }
+    function setManualMode() {
+      elNowBtn.classList.remove('live');
+      elModeTag.classList.remove('live');
+      elModeTag.classList.add('manual');
+      elModeTag.textContent = 'MANUAL';
+    }
+
+    // Build a manual Date from the date input + slider minutes (interpreted as UTC).
+    function buildManualDate() {
+      const dateStr = elDate.value;          // "YYYY-MM-DD"
+      const minutes = parseInt(elSlider.value, 10) || 0;
+      const parts = dateStr.split('-');
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const hh = Math.floor(minutes / 60);
+      const mm = minutes % 60;
+      return new Date(Date.UTC(y, m, day, hh, mm, 0));
+    }
+
+    function updateSliderDisplay() {
+      const minutes = parseInt(elSlider.value, 10) || 0;
+      const hh = Math.floor(minutes / 60);
+      const mm = minutes % 60;
+      elTimeDisp.textContent = pad(hh) + ':' + pad(mm);
+    }
+
+    elSlider.addEventListener('input', () => {
+      setManualMode();
+      manualDate = buildManualDate();
+      updateSliderDisplay();
+    });
+    elDate.addEventListener('change', () => {
+      setManualMode();
+      manualDate = buildManualDate();
+    });
+    elNowBtn.addEventListener('click', () => {
+      setLiveMode();
+    });
+
+    // Initialize controls to the current real time
+    {
+      const now = new Date();
+      elDate.value = dateInputValue(now);
+      elSlider.value = sliderMinutes(now);
+      updateSliderDisplay();
+    }
+
+    function refreshHUD(activeDate, sun) {
+      elUTC.textContent   = fmtUTC(activeDate);
+      elLocal.textContent = fmtTime(activeDate);
+      const f = fmtLatLon(sun.lat, sun.lon);
+      elLat.textContent = f.lat;
+      elLon.textContent = f.lon;
+      // In live mode, keep the date/slider mirroring real time
+      if (manualDate === null) {
+        elDate.value = dateInputValue(activeDate);
+        elSlider.value = sliderMinutes(activeDate);
+        updateSliderDisplay();
+      }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Camera & interaction
+    // ──────────────────────────────────────────────────────────────
+    let radius = 3.2;
+    // Initial view: try to face the user's longitude based on browser timezone offset.
+    // Convert offset (minutes west of UTC) into a rough longitude.
+    const tzOffsetMin = new Date().getTimezoneOffset(); // positive if behind UTC
+    const guessedLon = -tzOffsetMin / 4;                // 60 min = 15° (lon = -offset/4)
+    let camPos = geoToVec(20, guessedLon, radius);
+    function applyCam() { camera.position.copy(camPos); camera.lookAt(0, 0, 0); }
+    applyCam();
+
+    let dragging = false, px = 0, py = 0;
+    stage.addEventListener('pointerdown', (e) => {
+      dragging = true; px = e.clientX; py = e.clientY;
+      stage.setPointerCapture(e.pointerId);
+    });
+    stage.addEventListener('pointerup', (e) => {
+      dragging = false;
+      if (stage.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId);
+    });
+    stage.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - px, dy = e.clientY - py;
+      px = e.clientX; py = e.clientY;
+      const yAxis = new THREE.Vector3(0, 1, 0);
+      const right = new THREE.Vector3().crossVectors(yAxis, camPos).normalize();
+      camPos.applyAxisAngle(yAxis, -dx * 0.005);
+      camPos.applyAxisAngle(right, -dy * 0.005);
+      if (Math.abs(camPos.y) > radius * 0.985) {
+        camPos.y = Math.sign(camPos.y) * radius * 0.985;
+        camPos.setLength(radius);
+      }
+      applyCam();
+    });
+    stage.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      radius *= e.deltaY > 0 ? 1.1 : 0.91;
+      radius = Math.max(1.4, Math.min(8, radius));
+      camPos.setLength(radius);
+      applyCam();
+    }, { passive: false });
+
+    window.addEventListener('resize', () => {
+      const w = stage.clientWidth, h = stage.clientHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    });
+
+    // ──────────────────────────────────────────────────────────────
+    // Render loop
+    // ──────────────────────────────────────────────────────────────
+    function tick() {
+      requestAnimationFrame(tick);
+      const activeDate = (manualDate !== null) ? manualDate : new Date();
+      const sun = getSunDir(activeDate);
+      if (sunUniform) sunUniform.value.copy(sun.vec);
+      refreshHUD(activeDate, sun);
+      renderer.render(scene, camera);
+    }
+    tick();
+  })();
+  </script>
+</body>
+</html>
