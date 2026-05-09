@@ -1,8 +1,11 @@
 <!DOCTYPE html>
 <!--
   Solar Terminator — Cesium-based realtime 3D globe
-  Version: 0.5.1 (2026-05-09)
+  Version: 0.5.2 (2026-05-09)
   Changelog (most recent on top):
+    0.5.2  Async init (await imagery before viewer creation), defensive
+           setView re-applies, enableCollisionDetection=false, camera
+           drift diagnostic logs to console.
     0.5.1  Fix "globe drifts on its own" — switch to requestRenderMode,
            ellipsoid terrain, throttled 1Hz updates, cancelFlight on init.
            Add visible version label.
@@ -16,7 +19,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Solar Terminator v0.5.1 — 실시간 지구본 (Cesium)</title>
+  <title>Solar Terminator v0.5.2 — 실시간 지구본 (Cesium)</title>
   <meta name="description" content="현재 시각 기준으로 태양빛이 닿는 지구 영역을 보여주는 Cesium 기반 실시간 3D 지구본">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -257,8 +260,8 @@
     <header>
       <h1>Solar <span class="accent">·</span> Terminator</h1>
       <div class="meta">
-        v0.5.1 · 2026-05-09<br>
-        CESIUM-POWERED · TILED 3D
+        v0.5.2 · 2026-05-09<br>
+        DRIFT-DIAG BUILD
       </div>
     </header>
 
@@ -314,22 +317,39 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/Cesium.js"></script>
   <script>
-  (function () {
+  (async function () {
     'use strict';
 
     const credits = document.getElementById('credits');
     const loadingStatus = document.getElementById('loadingStatus');
 
+    console.log('%cSolar Terminator', 'color:#f4a261;font-size:14px;font-weight:600');
+    console.log('Version 0.5.2 (2026-05-09) — async init + camera-drift diagnostics');
+
     // ──────────────────────────────────────────────────────────────
     // Imagery: ESRI World Imagery (no API key required, satellite tiles)
+    //   AWAIT before viewer construction. The earlier v0.5.1 used
+    //   ImageryLayer.fromProviderAsync which lets the viewer be created
+    //   while imagery is still loading. We suspect Cesium does internal
+    //   camera adjustments when imagery resolves, fighting our setView.
+    //   Awaiting here means imagery is fully ready when we configure
+    //   the camera.
     // ──────────────────────────────────────────────────────────────
-    const imageryPromise = Cesium.ArcGisMapServerImageryProvider.fromUrl(
-      'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer',
-      { enablePickFeatures: false }
-    );
+    let provider;
+    try {
+      provider = await Cesium.ArcGisMapServerImageryProvider.fromUrl(
+        'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer',
+        { enablePickFeatures: false }
+      );
+    } catch (err) {
+      loadingStatus.textContent = 'ESRI imagery 로드 실패';
+      console.error('Imagery load failed:', err);
+      return;
+    }
+    const baseLayer = new Cesium.ImageryLayer(provider);
 
     const viewer = new Cesium.Viewer('cesiumContainer', {
-      baseLayer: Cesium.ImageryLayer.fromProviderAsync(imageryPromise),
+      baseLayer: baseLayer,
       animation: false,
       timeline: false,
       baseLayerPicker: false,
@@ -345,67 +365,93 @@
 
     // ──────────────────────────────────────────────────────────────
     // Lighting: enable sun-based day/night terminator
-    //   Cesium uses Simon1994 planetary positions internally, so the
-    //   terminator location is astronomically accurate (no manual EoT).
-    //
-    //   We deliberately leave dynamicAtmosphereLighting OFF — the
-    //   atmosphere effect causes subtle frame-to-frame variation that
-    //   reads as "the globe is drifting" when viewed from far away.
-    //   The day/night terminator on the surface is unaffected.
     // ──────────────────────────────────────────────────────────────
     viewer.scene.globe.enableLighting = true;
     viewer.scene.globe.dynamicAtmosphereLighting = false;
     viewer.scene.globe.dynamicAtmosphereLightingFromSun = false;
 
-    // Smooth ellipsoid (no terrain). Avoids tiny camera adjustments as
-    // terrain heights stream in.
     viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
-
-    // We control the clock from our slider/live mode logic
     viewer.clock.shouldAnimate = false;
-
-    // Render only when something changes (user input, requestRender call).
-    // This is the primary fix for "globe moves on its own": the default
-    // continuous 60Hz render loop, combined with per-frame lighting
-    // updates, can produce subtle visual drift. With on-demand rendering
-    // the scene is bit-exact stable until we explicitly request a redraw.
     viewer.scene.requestRenderMode = true;
     viewer.scene.maximumRenderTimeChange = Infinity;
 
     // ──────────────────────────────────────────────────────────────
     // Camera control tuning
-    //   Cesium's defaults include "inertia" — after dragging or zooming
-    //   the camera coasts with friction. Visually this makes the globe
-    //   look like it keeps moving on its own. We disable it for a more
-    //   deterministic feel.
     // ──────────────────────────────────────────────────────────────
     const sc = viewer.scene.screenSpaceCameraController;
     sc.inertiaSpin = 0;
     sc.inertiaTranslate = 0;
     sc.inertiaZoom = 0;
-    sc.minimumZoomDistance = 500;          // 500 m
-    sc.maximumZoomDistance = 80000000;     // 80,000 km
+    sc.minimumZoomDistance = 500;
+    sc.maximumZoomDistance = 80000000;
+    // New in v0.5.2: prevent collision detection from nudging the camera
+    sc.enableCollisionDetection = false;
 
     // ──────────────────────────────────────────────────────────────
-    // Initial view: orbit altitude over Asia, looking straight down
-    //   We MUST specify orientation explicitly. setView with only a
-    //   destination keeps the camera's previous orientation (which is
-    //   Cesium's default "home view" angle), producing a horizon /
-    //   limb view rather than a top-down globe view.
+    // Initial view + DEFENSIVE re-applies
+    //   v0.5.2: We've eliminated obvious causes (inertia, atmosphere,
+    //   render mode, terrain). User still reports continuous drift.
+    //   Hypothesis: a Cesium internal flight animation is overriding
+    //   our setView over time. We re-apply the view at multiple
+    //   timestamps to defeat any such animation.
     // ──────────────────────────────────────────────────────────────
-    viewer.camera.setView({
+    const HOME_VIEW = {
       destination: Cesium.Cartesian3.fromDegrees(135, 25, 22000000),
       orientation: {
         heading: 0,
         pitch: Cesium.Math.toRadians(-90),
         roll: 0
       }
-    });
-    // Cancel any residual flight animation that Cesium might have queued
-    viewer.camera.cancelFlight();
+    };
+    function applyHomeView() {
+      viewer.camera.cancelFlight();
+      viewer.camera.setView(HOME_VIEW);
+      viewer.scene.requestRender();
+    }
+    applyHomeView();
+    setTimeout(applyHomeView, 100);
+    setTimeout(applyHomeView, 500);
+    setTimeout(applyHomeView, 1500);
+    setTimeout(applyHomeView, 3000);
 
-    console.log('%cSolar Terminator', 'color:#f4a261;font-size:14px;font-weight:600');
-    console.log('Version 0.5.1 (2026-05-09) — Cesium build');
+    // ──────────────────────────────────────────────────────────────
+    // Camera drift diagnostic
+    //   Logs camera height to console every second. If the value
+    //   changes without user input, we have proof of internal drift.
+    //   Disable in production by setting DIAG=false.
+    // ──────────────────────────────────────────────────────────────
+    const DIAG = true;
+    if (DIAG) {
+      let prevHeight = null, prevHeading = null, prevPitch = null;
+      let userTouchedCamera = false;
+      viewer.camera.moveStart.addEventListener(() => { userTouchedCamera = true; });
+      viewer.camera.moveEnd.addEventListener(() => {
+        setTimeout(() => { userTouchedCamera = false; }, 100);
+      });
+      setInterval(() => {
+        if (userTouchedCamera) return;
+        const cart = Cesium.Cartographic.fromCartesian(viewer.camera.position);
+        const h = cart.height;
+        const hd = Cesium.Math.toDegrees(viewer.camera.heading);
+        const pt = Cesium.Math.toDegrees(viewer.camera.pitch);
+        if (prevHeight !== null) {
+          const dh = h - prevHeight;
+          const dHd = hd - prevHeading;
+          const dPt = pt - prevPitch;
+          if (Math.abs(dh) > 100 || Math.abs(dHd) > 0.01 || Math.abs(dPt) > 0.01) {
+            console.warn(
+              '[drift]',
+              'Δheight=' + dh.toFixed(0) + 'm',
+              'Δheading=' + dHd.toFixed(3) + '°',
+              'Δpitch=' + dPt.toFixed(3) + '°'
+            );
+          }
+        }
+        prevHeight = h;
+        prevHeading = hd;
+        prevPitch = pt;
+      }, 1000);
+    }
 
     // Hide loading message after the first frame finishes rendering
     viewer.scene.postRender.addEventListener(function once() {
