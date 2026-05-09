@@ -342,9 +342,34 @@
     // We control the clock from our slider/live mode logic
     viewer.clock.shouldAnimate = false;
 
-    // Initial view: orbit-altitude over Asia
+    // ──────────────────────────────────────────────────────────────
+    // Camera control tuning
+    //   Cesium's defaults include "inertia" — after dragging or zooming
+    //   the camera coasts with friction. Visually this makes the globe
+    //   look like it keeps moving on its own. We disable it for a more
+    //   deterministic feel.
+    // ──────────────────────────────────────────────────────────────
+    const sc = viewer.scene.screenSpaceCameraController;
+    sc.inertiaSpin = 0;
+    sc.inertiaTranslate = 0;
+    sc.inertiaZoom = 0;
+    sc.minimumZoomDistance = 500;          // 500 m
+    sc.maximumZoomDistance = 80000000;     // 80,000 km
+
+    // ──────────────────────────────────────────────────────────────
+    // Initial view: orbit altitude over Asia, looking straight down
+    //   We MUST specify orientation explicitly. setView with only a
+    //   destination keeps the camera's previous orientation (which is
+    //   Cesium's default "home view" angle), producing a horizon /
+    //   limb view rather than a top-down globe view.
+    // ──────────────────────────────────────────────────────────────
     viewer.camera.setView({
-      destination: Cesium.Cartesian3.fromDegrees(135, 28, 18000000)
+      destination: Cesium.Cartesian3.fromDegrees(135, 25, 22000000),
+      orientation: {
+        heading: 0,
+        pitch: Cesium.Math.toRadians(-90),
+        roll: 0
+      }
     });
 
     // Hide loading message after the first frame finishes rendering
@@ -522,7 +547,12 @@
           const lon = pos.coords.longitude;
 
           viewer.camera.flyTo({
-            destination: Cesium.Cartesian3.fromDegrees(lon, lat, 800000),
+            destination: Cesium.Cartesian3.fromDegrees(lon, lat, 2500000),
+            orientation: {
+              heading: 0,
+              pitch: Cesium.Math.toRadians(-90),
+              roll: 0
+            },
             duration: 2.0
           });
 
