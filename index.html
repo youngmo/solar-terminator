@@ -3,11 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Solar Terminator — 실시간 지구본</title>
-  <meta name="description" content="현재 시각 기준으로 태양빛이 닿는 지구 영역을 보여주는 실시간 3D 지구본">
+  <title>Solar Terminator — 실시간 지구본 (Cesium)</title>
+  <meta name="description" content="현재 시각 기준으로 태양빛이 닿는 지구 영역을 보여주는 Cesium 기반 실시간 3D 지구본">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Sora:wght@300;500&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
@@ -35,7 +36,7 @@
       justify-content: space-between;
       align-items: flex-start;
       pointer-events: none;
-      z-index: 3;
+      z-index: 10;
     }
     header h1 {
       font-family: 'Sora', sans-serif;
@@ -54,21 +55,37 @@
       line-height: 1.6;
     }
 
-    #stage {
+    #cesiumContainer {
       flex: 1;
       position: relative;
-      cursor: grab;
-      touch-action: none;
+      width: 100%;
     }
-    #stage:active { cursor: grabbing; }
-    canvas { display: block; }
+    .cesium-viewer-toolbar,
+    .cesium-viewer-fullscreenContainer,
+    .cesium-viewer-vrContainer { display: none; }
+    .cesium-credit-logoContainer { display: none !important; }
+
+    #credits {
+      position: absolute;
+      bottom: 6px;
+      right: 14px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      color: #545560;
+      z-index: 8;
+      pointer-events: auto;
+      max-width: 360px;
+      text-align: right;
+    }
+    #credits a { color: #787a85; text-decoration: none; }
+    #credits a:hover { color: #a0a2ad; }
 
     .panel {
       position: absolute;
       bottom: 24px;
       left: 32px;
       padding: 16px 20px;
-      background: rgba(15, 18, 26, 0.82);
+      background: rgba(15, 18, 26, 0.85);
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
       border: 0.5px solid rgba(255, 255, 255, 0.08);
@@ -76,7 +93,7 @@
       font-family: 'JetBrains Mono', monospace;
       font-size: 12px;
       line-height: 1.7;
-      z-index: 3;
+      z-index: 9;
       min-width: 360px;
     }
     .panel .row { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
@@ -116,35 +133,10 @@
       cursor: pointer;
       outline: none;
     }
-    .slider::-webkit-slider-runnable-track {
-      height: 2px;
-      background: rgba(255, 255, 255, 0.15);
-      border-radius: 1px;
-    }
-    .slider::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      background: #f4a261;
-      margin-top: -5px;
-      border: none;
-    }
-    .slider::-moz-range-track {
-      height: 2px;
-      background: rgba(255, 255, 255, 0.15);
-      border-radius: 1px;
-      border: none;
-    }
-    .slider::-moz-range-thumb {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      background: #f4a261;
-      border: none;
-      cursor: pointer;
-    }
+    .slider::-webkit-slider-runnable-track { height: 2px; background: rgba(255, 255, 255, 0.15); border-radius: 1px; }
+    .slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #f4a261; margin-top: -5px; border: none; }
+    .slider::-moz-range-track { height: 2px; background: rgba(255, 255, 255, 0.15); border-radius: 1px; border: none; }
+    .slider::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #f4a261; border: none; cursor: pointer; }
 
     .time-display {
       font-family: 'JetBrains Mono', monospace;
@@ -169,10 +161,7 @@
       transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
       flex-shrink: 0;
     }
-    .now-btn:hover {
-      background: rgba(244, 162, 97, 0.1);
-      border-color: rgba(244, 162, 97, 0.7);
-    }
+    .now-btn:hover { background: rgba(244, 162, 97, 0.1); border-color: rgba(244, 162, 97, 0.7); }
     .now-btn.live {
       color: #545560;
       border-color: rgba(255, 255, 255, 0.08);
@@ -197,18 +186,9 @@
       background: rgba(255, 255, 255, 0.04);
       border-color: rgba(255, 255, 255, 0.3);
     }
-    .locate-btn:disabled {
-      opacity: 0.5;
-      cursor: progress;
-    }
-    .locate-btn.error {
-      color: #e24b4a;
-      border-color: rgba(226, 75, 74, 0.4);
-    }
-    .locate-btn.success {
-      color: #5dcaa5;
-      border-color: rgba(93, 202, 165, 0.4);
-    }
+    .locate-btn:disabled { opacity: 0.5; cursor: progress; }
+    .locate-btn.error { color: #e24b4a; border-color: rgba(226, 75, 74, 0.4); }
+    .locate-btn.success { color: #5dcaa5; border-color: rgba(93, 202, 165, 0.4); }
 
     .mode-tag {
       display: inline-block;
@@ -224,17 +204,17 @@
 
     .hint {
       position: absolute;
-      bottom: 24px;
+      bottom: 30px;
       right: 32px;
       font-family: 'JetBrains Mono', monospace;
       font-size: 10px;
       color: #545560;
       letter-spacing: 0.05em;
       pointer-events: none;
-      z-index: 3;
+      z-index: 9;
     }
 
-    .status {
+    .loading-status {
       position: absolute;
       inset: 0;
       display: flex;
@@ -244,7 +224,8 @@
       font-size: 12px;
       color: #787a85;
       pointer-events: none;
-      z-index: 2;
+      z-index: 5;
+      transition: opacity 0.4s ease;
     }
 
     @media (max-width: 640px) {
@@ -263,13 +244,13 @@
     <header>
       <h1>Solar <span class="accent">·</span> Terminator</h1>
       <div class="meta">
-        REAL-TIME SUBSOLAR<br>
-        TRACKING / v1
+        CESIUM-POWERED<br>
+        TILED 3D GLOBE / v2
       </div>
     </header>
 
-    <div id="stage">
-      <div class="status" id="status">텍스처 불러오는 중…</div>
+    <div id="cesiumContainer">
+      <div class="loading-status" id="loadingStatus">Cesium 초기화 중…</div>
     </div>
 
     <div class="panel">
@@ -311,204 +292,70 @@
       </div>
     </div>
 
-    <div class="hint">DRAG TO ROTATE · SCROLL TO ZOOM</div>
+    <div class="hint">DRAG · SCROLL TO ZOOM · RIGHT-DRAG TO TILT</div>
+    <div id="credits"></div>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+  <script>
+    window.CESIUM_BASE_URL = 'https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/';
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/Cesium.js"></script>
   <script>
   (function () {
     'use strict';
 
-    // ──────────────────────────────────────────────────────────────
-    // Scene setup
-    // ──────────────────────────────────────────────────────────────
-    const stage = document.getElementById('stage');
-    const status = document.getElementById('status');
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(45, stage.clientWidth / stage.clientHeight, 0.1, 100);
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(stage.clientWidth, stage.clientHeight);
-    stage.appendChild(renderer.domElement);
+    const credits = document.getElementById('credits');
+    const loadingStatus = document.getElementById('loadingStatus');
 
     // ──────────────────────────────────────────────────────────────
-    // Texture loading
-    //   Try several CDN-hosted Earth texture pairs in order. If all fail
-    //   (CORS, 404, network), fall back to a procedural shader that draws
-    //   a generic noise-based pseudo-Earth so the day/night terminator
-    //   logic stays inspectable even without a real surface map.
+    // Imagery: ESRI World Imagery (no API key required, satellite tiles)
     // ──────────────────────────────────────────────────────────────
-    const TEXTURE_SOURCES = [
-      {
-        name: 'three.js@r128 (jsdelivr)',
-        day:   'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/planets/earth_atmos_2048.jpg',
-        night: 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/planets/earth_lights_2048.png'
-      },
-      {
-        name: 'three-globe (unpkg)',
-        day:   'https://unpkg.com/three-globe@2.27.2/example/img/earth-blue-marble.jpg',
-        night: 'https://unpkg.com/three-globe@2.27.2/example/img/earth-night.jpg'
-      }
-    ];
+    const imageryPromise = Cesium.ArcGisMapServerImageryProvider.fromUrl(
+      'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer',
+      { enablePickFeatures: false }
+    );
 
-    function loadTexture(url) {
-      return new Promise((resolve, reject) => {
-        const loader = new THREE.TextureLoader();
-        loader.crossOrigin = 'anonymous';
-        loader.load(url, (tex) => resolve(tex), undefined, () => reject(new Error('load failed: ' + url)));
-      });
-    }
-
-    async function tryLoadAll() {
-      for (const src of TEXTURE_SOURCES) {
-        try {
-          const [day, night] = await Promise.all([loadTexture(src.day), loadTexture(src.night)]);
-          status.style.display = 'none';
-          buildGlobe(false, day, night);
-          return;
-        } catch (err) {
-          console.warn('[texture] source failed:', src.name, err);
-        }
-      }
-      status.textContent = '모든 텍스처 소스 로드 실패 — 단순화된 지구 표시 (대륙 모양 없음)';
-      status.style.color = '#f4a261';
-      setTimeout(() => { status.style.opacity = '0'; status.style.transition = 'opacity 0.6s'; }, 4000);
-      buildGlobe(true, null, null);
-    }
-    tryLoadAll();
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      baseLayer: Cesium.ImageryLayer.fromProviderAsync(imageryPromise),
+      animation: false,
+      timeline: false,
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      fullscreenButton: false,
+      infoBox: false,
+      selectionIndicator: false,
+      creditContainer: credits
+    });
 
     // ──────────────────────────────────────────────────────────────
-    // Globe + shader
+    // Lighting: enable sun-based day/night terminator
+    //   Cesium uses Simon1994 planetary positions internally, so the
+    //   terminator location is astronomically accurate (no manual EoT).
     // ──────────────────────────────────────────────────────────────
-    let sunUniform = null;
+    viewer.scene.globe.enableLighting = true;
+    viewer.scene.globe.dynamicAtmosphereLighting = true;
+    viewer.scene.globe.dynamicAtmosphereLightingFromSun = true;
 
-    const vertSh = `
-      varying vec3 vWorldNormal;
-      varying vec2 vUv;
-      void main() {
-        vWorldNormal = normalize(mat3(modelMatrix) * normal);
-        vUv = uv;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `;
+    // We control the clock from our slider/live mode logic
+    viewer.clock.shouldAnimate = false;
 
-    const fragTextured = `
-      uniform sampler2D dayMap;
-      uniform sampler2D nightMap;
-      uniform vec3 sunDir;
-      varying vec3 vWorldNormal;
-      varying vec2 vUv;
-      void main() {
-        vec3 day   = texture2D(dayMap,   vUv).rgb;
-        vec3 night = texture2D(nightMap, vUv).rgb * 1.6;
-        float c = dot(normalize(vWorldNormal), normalize(sunDir));
-        float t = smoothstep(-0.18, 0.18, c);
-        vec3 col = mix(night, day, t);
-        float tw = clamp(1.0 - abs(c) * 5.0, 0.0, 1.0);
-        col = mix(col, col * vec3(1.15, 0.78, 0.62), tw * 0.35);
-        gl_FragColor = vec4(col, 1.0);
-      }
-    `;
+    // Initial view: orbit-altitude over Asia
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(135, 28, 18000000)
+    });
 
-    const fragProcedural = `
-      uniform vec3 sunDir;
-      varying vec3 vWorldNormal;
-      varying vec2 vUv;
-      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-      float noise(vec2 p) {
-        vec2 i = floor(p), f = fract(p);
-        float a = hash(i),                b = hash(i + vec2(1.0, 0.0));
-        float c2 = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));
-        vec2 u = f * f * (3.0 - 2.0 * f);
-        return mix(mix(a, b, u.x), mix(c2, d, u.x), u.y);
-      }
-      void main() {
-        float lat = (vUv.y - 0.5) * 3.14159;
-        vec2 p = vec2(vUv.x * 6.28318, lat * 2.0);
-        float n = 0.0; float amp = 0.5;
-        for (int i = 0; i < 5; i++) { n += noise(p) * amp; p *= 2.0; amp *= 0.5; }
-        vec3 ocean = vec3(0.10, 0.22, 0.38);
-        vec3 land  = vec3(0.20, 0.42, 0.18);
-        vec3 ice   = vec3(0.85, 0.88, 0.92);
-        vec3 base  = mix(ocean, land, smoothstep(0.45, 0.55, n));
-        base = mix(base, ice, smoothstep(0.85, 1.0, abs(sin(lat))));
-        vec3 night = base * 0.08 + vec3(0.02, 0.03, 0.06);
-        float c = dot(normalize(vWorldNormal), normalize(sunDir));
-        float t = smoothstep(-0.18, 0.18, c);
-        vec3 col = mix(night, base, t);
-        float tw = clamp(1.0 - abs(c) * 5.0, 0.0, 1.0);
-        col = mix(col, col * vec3(1.15, 0.78, 0.62), tw * 0.35);
-        gl_FragColor = vec4(col, 1.0);
-      }
-    `;
-
-    function buildGlobe(fallback, dayTex, nightTex) {
-      const geom = new THREE.SphereGeometry(1, 96, 96);
-      const uniforms = { sunDir: { value: new THREE.Vector3(1, 0, 0) } };
-      if (!fallback) {
-        uniforms.dayMap   = { value: dayTex };
-        uniforms.nightMap = { value: nightTex };
-      }
-      sunUniform = uniforms.sunDir;
-
-      const mat = new THREE.ShaderMaterial({
-        uniforms,
-        vertexShader: vertSh,
-        fragmentShader: fallback ? fragProcedural : fragTextured
-      });
-      scene.add(new THREE.Mesh(geom, mat));
-
-      // axial line
-      const axisGeom = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(0, -1.25, 0), new THREE.Vector3(0, 1.25, 0)
-      ]);
-      const axisMat = new THREE.LineBasicMaterial({
-        color: 0xffffff, transparent: true, opacity: 0.12
-      });
-      scene.add(new THREE.Line(axisGeom, axisMat));
-    }
+    // Hide loading message after the first frame finishes rendering
+    viewer.scene.postRender.addEventListener(function once() {
+      loadingStatus.style.opacity = '0';
+      setTimeout(() => { loadingStatus.style.display = 'none'; }, 500);
+      viewer.scene.postRender.removeEventListener(once);
+    });
 
     // ──────────────────────────────────────────────────────────────
-    // Coordinate conventions
-    //   Three.js SphereGeometry default UV maps:
-    //     Greenwich (lon 0°)  → +X
-    //     Long.   90°E        → −Z
-    //     Long.  180°         → −X
-    //     Long.   90°W        → +Z
-    //   Therefore:
-    //     vec.x =  cos(lat) · cos(lon)
-    //     vec.y =  sin(lat)
-    //     vec.z = −cos(lat) · sin(lon)
-    // ──────────────────────────────────────────────────────────────
-    function geoToVec(latDeg, lonDeg, r) {
-      const lat = latDeg * Math.PI / 180;
-      const lon = lonDeg * Math.PI / 180;
-      const k = (r === undefined ? 1 : r);
-      return new THREE.Vector3(
-         k * Math.cos(lat) * Math.cos(lon),
-         k * Math.sin(lat),
-        -k * Math.cos(lat) * Math.sin(lon)
-      );
-    }
-
-    // ──────────────────────────────────────────────────────────────
-    // Solar position (low-precision, no equation-of-time correction)
-    //   Declination ≈ 23.44° · sin(2π · (N − 81) / 365),  N = day of year
-    //   Sub-solar longitude = (12 − UTC_hours) · 15°
-    //   Expected error: ±0.5° in declination, ±15 min (~3.75°) from EoT
-    // ──────────────────────────────────────────────────────────────
-    function getSunDir(date) {
-      const startUTC = Date.UTC(date.getUTCFullYear(), 0, 0);
-      const dayOfYear = Math.floor((date.getTime() - startUTC) / 86400000);
-      const decl = 23.44 * Math.sin(2 * Math.PI * (dayOfYear - 81) / 365);
-      const utcH = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
-      const lonDeg = (12 - utcH) * 15;
-      return { vec: geoToVec(decl, lonDeg, 1), lat: decl, lon: lonDeg };
-    }
-
-    // ──────────────────────────────────────────────────────────────
-    // HUD + manual time control
+    // DOM refs
     // ──────────────────────────────────────────────────────────────
     const elUTC      = document.getElementById('utc');
     const elLocal    = document.getElementById('local');
@@ -523,10 +370,12 @@
     const elUserLocRow = document.getElementById('user-loc-row');
     const elUserLoc  = document.getElementById('user-loc');
 
-    // When manualDate is null, the globe follows real time.
-    // When set, the slider/date input drive the displayed time.
     let manualDate = null;
+    let userMarker = null;
 
+    // ──────────────────────────────────────────────────────────────
+    // Formatting helpers
+    // ──────────────────────────────────────────────────────────────
     function pad(n) { return String(n).padStart(2, '0'); }
     function fmtTime(d) {
       return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
@@ -552,6 +401,31 @@
       return d.getUTCHours() * 60 + d.getUTCMinutes();
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // Subsolar point (with equation-of-time correction)
+    //   δ ≈ 23.44° · sin(B),     B = 2π · (N − 81) / 365
+    //   EoT (min) ≈ 9.87 sin(2B) − 7.53 cos(B) − 1.5 sin(B)
+    //   λ_sun = (12 − (UTC + EoT/60)) · 15°
+    // Note: the visual day/night terminator on the globe is computed by
+    // Cesium with full precision (Simon 1994). The HUD readout below
+    // uses this simpler closed-form so users can see the numbers without
+    // round-tripping through Cesium's astronomy module.
+    // ──────────────────────────────────────────────────────────────
+    function getSubsolar(date) {
+      const startUTC = Date.UTC(date.getUTCFullYear(), 0, 0);
+      const dayOfYear = Math.floor((date.getTime() - startUTC) / 86400000);
+      const B = 2 * Math.PI * (dayOfYear - 81) / 365;
+      const decl = 23.44 * Math.sin(B);
+      const eotMin = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B);
+      const utcH = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+      const trueSolarH = utcH + eotMin / 60;
+      const lonDeg = (12 - trueSolarH) * 15;
+      return { lat: decl, lon: lonDeg };
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Mode handling
+    // ──────────────────────────────────────────────────────────────
     function setLiveMode() {
       manualDate = null;
       elNowBtn.classList.add('live');
@@ -565,10 +439,8 @@
       elModeTag.classList.add('manual');
       elModeTag.textContent = 'MANUAL';
     }
-
-    // Build a manual Date from the date input + slider minutes (interpreted as UTC).
     function buildManualDate() {
-      const dateStr = elDate.value;          // "YYYY-MM-DD"
+      const dateStr = elDate.value;
       const minutes = parseInt(elSlider.value, 10) || 0;
       const parts = dateStr.split('-');
       const y = parseInt(parts[0], 10);
@@ -578,7 +450,6 @@
       const mm = minutes % 60;
       return new Date(Date.UTC(y, m, day, hh, mm, 0));
     }
-
     function updateSliderDisplay() {
       const minutes = parseInt(elSlider.value, 10) || 0;
       const hh = Math.floor(minutes / 60);
@@ -586,6 +457,34 @@
       elTimeDisp.textContent = pad(hh) + ':' + pad(mm);
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // Per-frame update: drive Cesium clock + HUD
+    // ──────────────────────────────────────────────────────────────
+    function update() {
+      const date = (manualDate !== null) ? manualDate : new Date();
+      // Cesium uses clock.currentTime to compute the sun position used
+      // by enableLighting. Setting it every frame keeps lighting in sync
+      // with our time mode (LIVE or MANUAL).
+      viewer.clock.currentTime = Cesium.JulianDate.fromDate(date);
+
+      elUTC.textContent   = fmtUTC(date);
+      elLocal.textContent = fmtTime(date);
+      const sub = getSubsolar(date);
+      const f = fmtLatLon(sub.lat, sub.lon);
+      elLat.textContent = f.lat;
+      elLon.textContent = f.lon;
+
+      if (manualDate === null) {
+        elDate.value = dateInputValue(date);
+        elSlider.value = sliderMinutes(date);
+        updateSliderDisplay();
+      }
+    }
+    viewer.scene.preRender.addEventListener(update);
+
+    // ──────────────────────────────────────────────────────────────
+    // Time control event handlers
+    // ──────────────────────────────────────────────────────────────
     elSlider.addEventListener('input', () => {
       setManualMode();
       manualDate = buildManualDate();
@@ -595,11 +494,9 @@
       setManualMode();
       manualDate = buildManualDate();
     });
-    elNowBtn.addEventListener('click', () => {
-      setLiveMode();
-    });
+    elNowBtn.addEventListener('click', () => setLiveMode());
 
-    // Initialize controls to the current real time
+    // Initialize controls to current real time
     {
       const now = new Date();
       elDate.value = dateInputValue(now);
@@ -607,129 +504,9 @@
       updateSliderDisplay();
     }
 
-    function refreshHUD(activeDate, sun) {
-      elUTC.textContent   = fmtUTC(activeDate);
-      elLocal.textContent = fmtTime(activeDate);
-      const f = fmtLatLon(sun.lat, sun.lon);
-      elLat.textContent = f.lat;
-      elLon.textContent = f.lon;
-      // In live mode, keep the date/slider mirroring real time
-      if (manualDate === null) {
-        elDate.value = dateInputValue(activeDate);
-        elSlider.value = sliderMinutes(activeDate);
-        updateSliderDisplay();
-      }
-    }
-
     // ──────────────────────────────────────────────────────────────
-    // Camera & interaction
+    // Geolocation: fly camera to user position, drop a marker
     // ──────────────────────────────────────────────────────────────
-    let radius = 3.2;
-    // Initial view: try to face the user's longitude based on browser timezone offset.
-    // Convert offset (minutes west of UTC) into a rough longitude.
-    const tzOffsetMin = new Date().getTimezoneOffset(); // positive if behind UTC
-    const guessedLon = -tzOffsetMin / 4;                // 60 min = 15° (lon = -offset/4)
-    let camPos = geoToVec(20, guessedLon, radius);
-    function applyCam() { camera.position.copy(camPos); camera.lookAt(0, 0, 0); }
-    applyCam();
-
-    let dragging = false, px = 0, py = 0;
-    stage.addEventListener('pointerdown', (e) => {
-      dragging = true; px = e.clientX; py = e.clientY;
-      camAnim = null;
-      stage.setPointerCapture(e.pointerId);
-    });
-    stage.addEventListener('pointerup', (e) => {
-      dragging = false;
-      if (stage.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId);
-    });
-    stage.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
-      const dx = e.clientX - px, dy = e.clientY - py;
-      px = e.clientX; py = e.clientY;
-      const yAxis = new THREE.Vector3(0, 1, 0);
-      const right = new THREE.Vector3().crossVectors(yAxis, camPos).normalize();
-      camPos.applyAxisAngle(yAxis, -dx * 0.005);
-      camPos.applyAxisAngle(right, -dy * 0.005);
-      if (Math.abs(camPos.y) > radius * 0.985) {
-        camPos.y = Math.sign(camPos.y) * radius * 0.985;
-        camPos.setLength(radius);
-      }
-      applyCam();
-    });
-    stage.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      radius *= e.deltaY > 0 ? 1.1 : 0.91;
-      radius = Math.max(1.4, Math.min(8, radius));
-      camPos.setLength(radius);
-      applyCam();
-    }, { passive: false });
-
-    window.addEventListener('resize', () => {
-      const w = stage.clientWidth, h = stage.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-    });
-
-    // ──────────────────────────────────────────────────────────────
-    // User location: marker + slerp camera animation
-    // ──────────────────────────────────────────────────────────────
-    let userMarker = null;
-    let camAnim = null;
-
-    function placeUserMarker(latDeg, lonDeg) {
-      if (userMarker) {
-        scene.remove(userMarker);
-        userMarker.geometry.dispose();
-        userMarker.material.dispose();
-      }
-      const dotGeom = new THREE.SphereGeometry(0.018, 20, 20);
-      const dotMat  = new THREE.MeshBasicMaterial({
-        color: 0xf4a261, transparent: true, opacity: 0.95
-      });
-      userMarker = new THREE.Mesh(dotGeom, dotMat);
-      userMarker.position.copy(geoToVec(latDeg, lonDeg, 1.012));
-      userMarker.userData.startTime = performance.now();
-      scene.add(userMarker);
-    }
-
-    function flyToLocation(latDeg, lonDeg) {
-      const targetUnit = geoToVec(latDeg, lonDeg, 1).normalize();
-      camAnim = {
-        from: camPos.clone(),
-        toUnit: targetUnit,
-        start: performance.now(),
-        duration: 1200
-      };
-    }
-
-    function easeInOutCubic(t) {
-      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-    }
-
-    function stepCamAnim(now) {
-      if (!camAnim) return;
-      const t = Math.min((now - camAnim.start) / camAnim.duration, 1);
-      const e = easeInOutCubic(t);
-      const startUnit = camAnim.from.clone().normalize();
-      const endUnit   = camAnim.toUnit;
-      const dot = Math.max(-1, Math.min(1, startUnit.dot(endUnit)));
-      const omega = Math.acos(dot);
-      const sinO = Math.sin(omega);
-      let interp;
-      if (sinO < 0.001) {
-        interp = endUnit.clone();
-      } else {
-        const a = Math.sin((1 - e) * omega) / sinO;
-        const b = Math.sin(e * omega) / sinO;
-        interp = startUnit.multiplyScalar(a).add(endUnit.clone().multiplyScalar(b));
-      }
-      camPos.copy(interp.multiplyScalar(radius));
-      applyCam();
-      if (t >= 1) camAnim = null;
-    }
-
     elLocateBtn.addEventListener('click', () => {
       if (!('geolocation' in navigator)) {
         elLocateBtn.textContent = '브라우저 미지원';
@@ -743,8 +520,24 @@
         (pos) => {
           const lat = pos.coords.latitude;
           const lon = pos.coords.longitude;
-          flyToLocation(lat, lon);
-          placeUserMarker(lat, lon);
+
+          viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(lon, lat, 800000),
+            duration: 2.0
+          });
+
+          if (userMarker) viewer.entities.remove(userMarker);
+          userMarker = viewer.entities.add({
+            position: Cesium.Cartesian3.fromDegrees(lon, lat),
+            point: {
+              pixelSize: 12,
+              color: Cesium.Color.fromCssColorString('#f4a261'),
+              outlineColor: Cesium.Color.WHITE,
+              outlineWidth: 1.5,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY
+            }
+          });
+
           const f = fmtLatLon(lat, lon);
           elUserLoc.textContent = f.lat + ' · ' + f.lon;
           elUserLocRow.style.display = '';
@@ -759,7 +552,6 @@
         (err) => {
           let msg = '위치 확인 실패';
           if (err.code === 1) msg = '권한 거부됨';
-          else if (err.code === 2) msg = '위치 확인 실패';
           else if (err.code === 3) msg = '시간 초과';
           elLocateBtn.classList.add('error');
           elLocateBtn.textContent = msg;
@@ -772,25 +564,6 @@
         { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
       );
     });
-
-    // ──────────────────────────────────────────────────────────────
-    // Render loop
-    // ──────────────────────────────────────────────────────────────
-    function tick() {
-      requestAnimationFrame(tick);
-      const now = performance.now();
-      stepCamAnim(now);
-      if (userMarker) {
-        const dt = (now - userMarker.userData.startTime) / 1000;
-        userMarker.material.opacity = 0.6 + 0.35 * Math.abs(Math.sin(dt * 2));
-      }
-      const activeDate = (manualDate !== null) ? manualDate : new Date();
-      const sun = getSunDir(activeDate);
-      if (sunUniform) sunUniform.value.copy(sun.vec);
-      refreshHUD(activeDate, sun);
-      renderer.render(scene, camera);
-    }
-    tick();
   })();
   </script>
 </body>
