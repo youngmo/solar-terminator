@@ -180,6 +180,36 @@
       background: transparent;
     }
 
+    .locate-btn {
+      flex: 1;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      background: transparent;
+      color: #e8e8ec;
+      border: 0.5px solid rgba(255, 255, 255, 0.15);
+      border-radius: 3px;
+      padding: 6px 10px;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    }
+    .locate-btn:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+    .locate-btn:disabled {
+      opacity: 0.5;
+      cursor: progress;
+    }
+    .locate-btn.error {
+      color: #e24b4a;
+      border-color: rgba(226, 75, 74, 0.4);
+    }
+    .locate-btn.success {
+      color: #5dcaa5;
+      border-color: rgba(93, 202, 165, 0.4);
+    }
+
     .mode-tag {
       display: inline-block;
       font-size: 9px;
@@ -270,6 +300,14 @@
         <span class="lbl">UTC TIME</span>
         <input type="range" id="time-slider" class="slider" min="0" max="1439" step="1" value="0">
         <span id="time-display" class="time-display">00:00</span>
+      </div>
+      <div class="ctrl-row">
+        <span class="lbl">VIEW</span>
+        <button id="locate-btn" class="locate-btn">내 위치로 이동</button>
+      </div>
+      <div class="row" id="user-loc-row" style="display:none">
+        <span class="lbl">MY LOCATION</span>
+        <span class="val" id="user-loc">—</span>
       </div>
     </div>
 
@@ -481,6 +519,9 @@
     const elTimeDisp = document.getElementById('time-display');
     const elNowBtn   = document.getElementById('now-btn');
     const elModeTag  = document.getElementById('mode-tag');
+    const elLocateBtn = document.getElementById('locate-btn');
+    const elUserLocRow = document.getElementById('user-loc-row');
+    const elUserLoc  = document.getElementById('user-loc');
 
     // When manualDate is null, the globe follows real time.
     // When set, the slider/date input drive the displayed time.
@@ -595,6 +636,7 @@
     let dragging = false, px = 0, py = 0;
     stage.addEventListener('pointerdown', (e) => {
       dragging = true; px = e.clientX; py = e.clientY;
+      camAnim = null;
       stage.setPointerCapture(e.pointerId);
     });
     stage.addEventListener('pointerup', (e) => {
@@ -631,10 +673,117 @@
     });
 
     // ──────────────────────────────────────────────────────────────
+    // User location: marker + slerp camera animation
+    // ──────────────────────────────────────────────────────────────
+    let userMarker = null;
+    let camAnim = null;
+
+    function placeUserMarker(latDeg, lonDeg) {
+      if (userMarker) {
+        scene.remove(userMarker);
+        userMarker.geometry.dispose();
+        userMarker.material.dispose();
+      }
+      const dotGeom = new THREE.SphereGeometry(0.018, 20, 20);
+      const dotMat  = new THREE.MeshBasicMaterial({
+        color: 0xf4a261, transparent: true, opacity: 0.95
+      });
+      userMarker = new THREE.Mesh(dotGeom, dotMat);
+      userMarker.position.copy(geoToVec(latDeg, lonDeg, 1.012));
+      userMarker.userData.startTime = performance.now();
+      scene.add(userMarker);
+    }
+
+    function flyToLocation(latDeg, lonDeg) {
+      const targetUnit = geoToVec(latDeg, lonDeg, 1).normalize();
+      camAnim = {
+        from: camPos.clone(),
+        toUnit: targetUnit,
+        start: performance.now(),
+        duration: 1200
+      };
+    }
+
+    function easeInOutCubic(t) {
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+
+    function stepCamAnim(now) {
+      if (!camAnim) return;
+      const t = Math.min((now - camAnim.start) / camAnim.duration, 1);
+      const e = easeInOutCubic(t);
+      const startUnit = camAnim.from.clone().normalize();
+      const endUnit   = camAnim.toUnit;
+      const dot = Math.max(-1, Math.min(1, startUnit.dot(endUnit)));
+      const omega = Math.acos(dot);
+      const sinO = Math.sin(omega);
+      let interp;
+      if (sinO < 0.001) {
+        interp = endUnit.clone();
+      } else {
+        const a = Math.sin((1 - e) * omega) / sinO;
+        const b = Math.sin(e * omega) / sinO;
+        interp = startUnit.multiplyScalar(a).add(endUnit.clone().multiplyScalar(b));
+      }
+      camPos.copy(interp.multiplyScalar(radius));
+      applyCam();
+      if (t >= 1) camAnim = null;
+    }
+
+    elLocateBtn.addEventListener('click', () => {
+      if (!('geolocation' in navigator)) {
+        elLocateBtn.textContent = '브라우저 미지원';
+        elLocateBtn.classList.add('error');
+        return;
+      }
+      elLocateBtn.textContent = '위치 확인 중...';
+      elLocateBtn.disabled = true;
+      elLocateBtn.classList.remove('error', 'success');
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          flyToLocation(lat, lon);
+          placeUserMarker(lat, lon);
+          const f = fmtLatLon(lat, lon);
+          elUserLoc.textContent = f.lat + ' · ' + f.lon;
+          elUserLocRow.style.display = '';
+          elLocateBtn.classList.add('success');
+          elLocateBtn.textContent = '✓ 이동됨';
+          setTimeout(() => {
+            elLocateBtn.classList.remove('success');
+            elLocateBtn.textContent = '내 위치로 이동';
+            elLocateBtn.disabled = false;
+          }, 1800);
+        },
+        (err) => {
+          let msg = '위치 확인 실패';
+          if (err.code === 1) msg = '권한 거부됨';
+          else if (err.code === 2) msg = '위치 확인 실패';
+          else if (err.code === 3) msg = '시간 초과';
+          elLocateBtn.classList.add('error');
+          elLocateBtn.textContent = msg;
+          setTimeout(() => {
+            elLocateBtn.classList.remove('error');
+            elLocateBtn.textContent = '내 위치로 이동';
+            elLocateBtn.disabled = false;
+          }, 2000);
+        },
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+      );
+    });
+
+    // ──────────────────────────────────────────────────────────────
     // Render loop
     // ──────────────────────────────────────────────────────────────
     function tick() {
       requestAnimationFrame(tick);
+      const now = performance.now();
+      stepCamAnim(now);
+      if (userMarker) {
+        const dt = (now - userMarker.userData.startTime) / 1000;
+        userMarker.material.opacity = 0.6 + 0.35 * Math.abs(Math.sin(dt * 2));
+      }
       const activeDate = (manualDate !== null) ? manualDate : new Date();
       const sun = getSunDir(activeDate);
       if (sunUniform) sunUniform.value.copy(sun.vec);
